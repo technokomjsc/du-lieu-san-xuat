@@ -134,7 +134,7 @@ function khoiTao(dm) {
 async function taiDanhMuc() {
   if (!K || !MAY) { $('hientai').textContent = 'Liên kết không hợp lệ'; return; }
   try {
-    const r = await goiGet({ action: 'danhmuc' });
+    const r = await goiGet({ action: 'danhmuc', may: MAY });
     if (!r.ok) throw new Error(r.loi);
     khoiTao(r.data);
     await taiHienTai();
