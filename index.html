@@ -16,6 +16,7 @@
   .dt { background: #1a73e8; } .dg { background: #d93025; }
   .phu { background: #666; font-size: 18px; padding: 14px; }
   .canh { background: #fff3cd; border: 2px solid #e0a800; padding: 12px; border-radius: 10px; margin-bottom: 12px; display: none; }
+  .goiY { font-size: 14px; color: #666; margin-top: 4px; }
   #thongbao { position: fixed; left: 8px; right: 8px; bottom: 8px; background: #222; color: #fff; padding: 14px; border-radius: 8px; display: none; font-size: 18px; }
 </style>
 </head>
@@ -31,10 +32,15 @@
 <div class="card">
   <label>Nhân viên</label>
   <select id="nv"></select>
+
   <label>Ca</label>
   <select id="ca"></select>
+
   <label>Khuôn</label>
-  <select id="khuon"></select>
+  <input id="timKhuon" placeholder="Gõ để tìm khuôn..." oninput="veKhuon(this.value)">
+  <select id="khuon" style="margin-top:6px"></select>
+  <div class="goiY" id="goiYKhuon"></div>
+
   <label>Lý do dừng (chỉ dùng khi bấm Dừng)</label>
   <select id="lydo"></select>
 </div>
@@ -68,6 +74,7 @@ const MAY = qs.get('may') || '';
 const TEN_TT = { SX:'Bắt đầu SX', THAY_KHUON:'Thay khuôn', DAP_THU:'Dập thử', DUNG:'Dừng', HUY:'Hủy' };
 let lastRowKey = null;
 let lastCa = null;
+let DS_KHUON = [];
 
 const $ = id => document.getElementById(id);
 $('may').textContent = MAY;
@@ -96,7 +103,7 @@ async function goiPost(action, p) {
   return r.json();
 }
 
-// ---------- Danh mục và trạng thái ----------
+// ---------- Danh mục ----------
 function taoKey() {
   return MAY + '-' + Date.now().toString(36) + '-' + Math.random().toString(36).slice(2, 6);
 }
@@ -108,6 +115,20 @@ function fill(sel, rows, valKey, textFn) {
     o.value = r[valKey]; o.textContent = textFn(r);
     sel.appendChild(o);
   });
+}
+
+// Lọc danh sách khuôn theo ô tìm kiếm
+function veKhuon(tuKhoa) {
+  const t = (tuKhoa || '').trim().toLowerCase();
+  const cu = $('khuon').value;
+  const dsLoc = DS_KHUON.filter(r =>
+    (String(r.MaKhuon) + ' ' + String(r.TenHang) + ' ' + String(r.MaHang)).toLowerCase().includes(t)
+  );
+  fill($('khuon'), dsLoc, 'MaKhuon', r => r.MaKhuon + ' (' + r.TenHang + ')');
+  if (dsLoc.some(r => r.MaKhuon === cu)) $('khuon').value = cu;
+  $('goiYKhuon').textContent = DS_KHUON.length
+    ? 'Hiện ' + dsLoc.length + ' / ' + DS_KHUON.length + ' khuôn của máy này'
+    : 'Máy này chưa có khuôn nào trong danh mục';
 }
 
 function hm(s) { const [h, m] = String(s).split(':').map(Number); return h * 60 + m; }
@@ -124,10 +145,11 @@ function chonCaTheoGio(dsCa) {
 }
 
 function khoiTao(dm) {
-  fill($('nv'),    dm.nhanvien, 'MANV',    r => r.MANV + ' - ' + r.HOTEN);
-  fill($('khuon'), dm.khuon,    'MaKhuon', r => r.MaKhuon + ' (' + r.TenHang + ')');
-  fill($('ca'),    dm.ca,       'MaCa',    r => r.TenCa);
-  fill($('lydo'),  dm.lydo,     'MaLyDo',  r => r.TenLyDo);
+  fill($('nv'),   dm.nhanvien, 'MANV',   r => r.MANV + ' - ' + r.HOTEN);
+  fill($('ca'),   dm.ca,       'MaCa',   r => r.TenCa);
+  fill($('lydo'), dm.lydo,     'MaLyDo', r => r.TenLyDo);
+  DS_KHUON = dm.khuon;
+  veKhuon('');
   chonCaTheoGio(dm.ca);
 }
 
@@ -144,6 +166,7 @@ async function taiDanhMuc() {
   }
 }
 
+// ---------- Trạng thái hiện tại ----------
 async function taiHienTai() {
   try {
     const r = await goiGet({ action: 'hientai', may: MAY });
