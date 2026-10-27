@@ -1,0 +1,198 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<style>
+  body { font-family: Arial, sans-serif; margin: 0; padding: 12px; background: #f2f2f2; font-size: 18px; }
+  h1 { font-size: 28px; margin: 4px 0 12px; }
+  .card { background: #fff; border-radius: 10px; padding: 12px; margin-bottom: 12px; }
+  label { display: block; font-weight: bold; margin: 8px 0 4px; }
+  select, input { width: 100%; font-size: 20px; padding: 10px; box-sizing: border-box; }
+  .grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+  button { font-size: 22px; padding: 22px 8px; border: 0; border-radius: 12px; color: #fff; font-weight: bold; width: 100%; }
+  .sx { background: #1e8e3e; } .tk { background: #e37400; }
+  .dt { background: #1a73e8; } .dg { background: #d93025; }
+  .phu { background: #666; font-size: 18px; padding: 14px; }
+  .canh { background: #fff3cd; border: 2px solid #e0a800; padding: 12px; border-radius: 10px; margin-bottom: 12px; display: none; }
+  #thongbao { position: fixed; left: 8px; right: 8px; bottom: 8px; background: #222; color: #fff; padding: 14px; border-radius: 8px; display: none; font-size: 18px; }
+</style>
+</head>
+<body>
+<h1>Máy <span id="may"></span></h1>
+
+<div id="canh" class="canh">Đã sang ca mới. Chọn ca và bấm <b>Bắt đầu SX</b> để ghi ca mới.</div>
+
+<div class="card">
+  Trạng thái hiện tại: <b id="hientai">đang tải...</b>
+</div>
+
+<div class="card">
+  <label>Nhân viên</label>
+  <select id="nv"></select>
+  <label>Ca</label>
+  <select id="ca"></select>
+  <label>Khuôn</label>
+  <select id="khuon"></select>
+  <label>Lý do dừng (chỉ dùng khi bấm Dừng)</label>
+  <select id="lydo"></select>
+</div>
+
+<div class="grid">
+  <button class="sx" onclick="gui('SX')">Bắt đầu SX</button>
+  <button class="tk" onclick="gui('THAY_KHUON')">Thay khuôn</button>
+  <button class="dt" onclick="gui('DAP_THU')">Dập thử</button>
+  <button class="dg" onclick="gui('DUNG')">Dừng</button>
+</div>
+
+<div class="card" style="margin-top:12px">
+  <label>Phế phẩm (số lượng)</label>
+  <input id="pp" type="number" min="1" inputmode="numeric">
+  <button class="phu" style="margin-top:8px" onclick="guiPhePham()">Ghi phế phẩm</button>
+</div>
+
+<div class="card">
+  <button class="phu" onclick="huyCuoi()">Hủy lần quét cuối</button>
+</div>
+
+<div id="thongbao"></div>
+
+<script>
+const qs  = new URLSearchParams(location.search);
+const K   = qs.get('k') || '';
+const MAY = qs.get('may') || '';
+const TEN_TT = { SX:'Bắt đầu SX', THAY_KHUON:'Thay khuôn', DAP_THU:'Dập thử', DUNG:'Dừng', HUY:'Hủy' };
+let lastRowKey = null;
+let lastCa = null;
+
+document.getElementById('may').textContent = MAY;
+const $ = id => document.getElementById(id);
+
+function thongBao(t) {
+  const e = $('thongbao'); e.textContent = t; e.style.display = 'block';
+  setTimeout(() => e.style.display = 'none', 3000);
+}
+
+function taoKey() {
+  return MAY + '-' + Date.now().toString(36) + '-' + Math.random().toString(36).slice(2, 6);
+}
+
+function fill(sel, rows, valKey, textFn) {
+  sel.innerHTML = '';
+  rows.forEach(r => {
+    const o = document.createElement('option');
+    o.value = r[valKey]; o.textContent = textFn(r);
+    sel.appendChild(o);
+  });
+}
+
+function hm(s) { const [h, m] = String(s).split(':').map(Number); return h * 60 + m; }
+
+function chonCaTheoGio(dsCa) {
+  const d = new Date();
+  const t = d.getHours() * 60 + d.getMinutes();
+  for (const c of dsCa) {
+    const a = hm(c.GioBD), b = hm(c.GioKT);
+    const qua = c.QuaNgay === true || c.QuaNgay == 1;
+    const trong = qua ? (t >= a || t < b) : (t >= a && t < b);
+    if (trong) { $('ca').value = c.MaCa; return; }
+  }
+}
+
+function khoiTao(dm) {
+  fill($('nv'),    dm.nhanvien, 'MANV',    r => r.MANV + ' - ' + r.HOTEN);
+  fill($('khuon'), dm.khuon,    'MaKhuon', r => r.MaKhuon + ' (' + r.TenHang + ')');
+  fill($('ca'),    dm.ca,       'MaCa',    r => r.TenCa);
+  fill($('lydo'),  dm.lydo,     'MaLyDo',  r => r.TenLyDo);
+  chonCaTheoGio(dm.ca);
+}
+
+function taiDanhMuc() {
+  google.script.run
+    .withSuccessHandler(dm => { khoiTao(dm); taiHienTai(); chayHangCho(); })
+    .withFailureHandler(e => thongBao('Không tải được danh mục: ' + e.message))
+    .layDanhMuc(K);
+}
+
+function taiHienTai() {
+  google.script.run
+    .withSuccessHandler(r => {
+      lastRowKey = r ? r.rowKey : null;
+      lastCa = r ? r.maCa : null;
+      $('hientai').textContent = r
+        ? (TEN_TT[r.trangThai] || r.trangThai) + ' · ' + r.thoiGian + (r.maKhuon ? ' · ' + r.maKhuon : '')
+        : 'Chưa có trạng thái';
+      $('canh').style.display = (lastCa && lastCa !== $('ca').value) ? 'block' : 'none';
+    })
+    .trangThaiHienTai(K, MAY);
+}
+
+// ---------- Hàng chờ khi mất mạng ----------
+function layHangCho() { return JSON.parse(localStorage.getItem('hangcho') || '[]'); }
+function luuHangCho(q) { localStorage.setItem('hangcho', JSON.stringify(q)); }
+
+function xepHang(fn, p) {
+  const q = layHangCho(); q.push({ fn, p }); luuHangCho(q);
+  chayHangCho();
+}
+
+function chayHangCho() {
+  const q = layHangCho();
+  if (!q.length) return;
+  const item = q[0];
+  const ok = r => {
+    const cur = layHangCho(); cur.shift(); luuHangCho(cur);
+    if (r && r.ok === false) { thongBao('Không ghi được: ' + r.loi); }
+    else { thongBao('Đã ghi'); taiHienTai(); }
+    chayHangCho();
+  };
+  const fail = () => {
+    thongBao('Chưa gửi được, sẽ thử lại khi có mạng');
+    setTimeout(chayHangCho, 15000);
+  };
+  const runner = google.script.run.withSuccessHandler(ok).withFailureHandler(fail);
+  if (item.fn === 'ghiTrangThai') runner.ghiTrangThai(item.p);
+  else runner.ghiPhePham(item.p);
+}
+
+// ---------- Thao tác ----------
+function gui(tt) {
+  if (tt === 'DUNG' && !$('lydo').value) return thongBao('Chọn lý do dừng');
+  if (tt !== 'DUNG' && !$('khuon').value) return thongBao('Chọn khuôn');
+  if (!$('nv').value) return thongBao('Chọn nhân viên');
+  xepHang('ghiTrangThai', {
+    k: K, rowKey: taoKey(), thoiGianQuet: new Date().toISOString(),
+    may: MAY, trangThai: tt, maCa: $('ca').value,
+    maKhuon: tt === 'DUNG' ? '' : $('khuon').value,
+    lyDo: tt === 'DUNG' ? $('lydo').value : '',
+    maNV: $('nv').value, rowKeyHuy: ''
+  });
+}
+
+function huyCuoi() {
+  if (!lastRowKey) return thongBao('Không có lần quét nào để hủy');
+  if (!$('nv').value) return thongBao('Chọn nhân viên');
+  xepHang('ghiTrangThai', {
+    k: K, rowKey: taoKey(), thoiGianQuet: new Date().toISOString(),
+    may: MAY, trangThai: 'HUY', maCa: $('ca').value,
+    maKhuon: '', lyDo: '', maNV: $('nv').value, rowKeyHuy: lastRowKey
+  });
+}
+
+function guiPhePham() {
+  const n = parseInt($('pp').value, 10);
+  if (!(n > 0)) return thongBao('Nhập số lượng phế phẩm');
+  if (!$('khuon').value) return thongBao('Chọn khuôn');
+  if (!$('nv').value) return thongBao('Chọn nhân viên');
+  xepHang('ghiPhePham', {
+    k: K, rowKey: taoKey(), thoiGianQuet: new Date().toISOString(),
+    may: MAY, maCa: $('ca').value, maKhuon: $('khuon').value,
+    soLuong: n, maNV: $('nv').value
+  });
+  $('pp').value = '';
+}
+
+taiDanhMuc();
+</script>
+</body>
+</html>
