@@ -3,6 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Ghi trạng thái máy</title>
 <style>
   body { font-family: Arial, sans-serif; margin: 0; padding: 12px; background: #f2f2f2; font-size: 18px; }
   h1 { font-size: 28px; margin: 4px 0 12px; }
@@ -58,6 +59,9 @@
 <div id="thongbao"></div>
 
 <script>
+// ===== CẤU HÌNH: thay bằng URL triển khai Apps Script (kết thúc bằng /exec) =====
+const APPS_URL = 'https://script.google.com/macros/s/AKfycbzBjiZDNNAReoHBJhrnf7kNmbxgA_eevHHGZ32jj5ruIaTfci4AhMOBuGUUoHEJaJ1Y/exec';
+
 const qs  = new URLSearchParams(location.search);
 const K   = qs.get('k') || '';
 const MAY = qs.get('may') || '';
@@ -65,14 +69,34 @@ const TEN_TT = { SX:'Bắt đầu SX', THAY_KHUON:'Thay khuôn', DAP_THU:'Dập 
 let lastRowKey = null;
 let lastCa = null;
 
-document.getElementById('may').textContent = MAY;
 const $ = id => document.getElementById(id);
+$('may').textContent = MAY;
 
 function thongBao(t) {
   const e = $('thongbao'); e.textContent = t; e.style.display = 'block';
   setTimeout(() => e.style.display = 'none', 3000);
 }
 
+// ---------- Gọi Apps Script ----------
+async function goiGet(params) {
+  const u = new URL(APPS_URL);
+  u.searchParams.set('k', K);
+  Object.entries(params).forEach(([a, b]) => u.searchParams.set(a, b));
+  const r = await fetch(u.toString());
+  return r.json();
+}
+
+async function goiPost(action, p) {
+  // text/plain để trình duyệt không gửi preflight, Apps Script đọc được
+  const r = await fetch(APPS_URL, {
+    method: 'POST',
+    headers: { 'Content-Type': 'text/plain;charset=utf-8' },
+    body: JSON.stringify({ ...p, action, k: K })
+  });
+  return r.json();
+}
+
+// ---------- Danh mục và trạng thái ----------
 function taoKey() {
   return MAY + '-' + Date.now().toString(36) + '-' + Math.random().toString(36).slice(2, 6);
 }
@@ -107,52 +131,58 @@ function khoiTao(dm) {
   chonCaTheoGio(dm.ca);
 }
 
-function taiDanhMuc() {
-  google.script.run
-    .withSuccessHandler(dm => { khoiTao(dm); taiHienTai(); chayHangCho(); })
-    .withFailureHandler(e => thongBao('Không tải được danh mục: ' + e.message))
-    .layDanhMuc(K);
+async function taiDanhMuc() {
+  if (!K || !MAY) { $('hientai').textContent = 'Liên kết không hợp lệ'; return; }
+  try {
+    const r = await goiGet({ action: 'danhmuc' });
+    if (!r.ok) throw new Error(r.loi);
+    khoiTao(r.data);
+    await taiHienTai();
+    chayHangCho();
+  } catch (e) {
+    thongBao('Không tải được danh mục: ' + e.message);
+  }
 }
 
-function taiHienTai() {
-  google.script.run
-    .withSuccessHandler(r => {
-      lastRowKey = r ? r.rowKey : null;
-      lastCa = r ? r.maCa : null;
-      $('hientai').textContent = r
-        ? (TEN_TT[r.trangThai] || r.trangThai) + ' · ' + r.thoiGian + (r.maKhuon ? ' · ' + r.maKhuon : '')
-        : 'Chưa có trạng thái';
-      $('canh').style.display = (lastCa && lastCa !== $('ca').value) ? 'block' : 'none';
-    })
-    .trangThaiHienTai(K, MAY);
+async function taiHienTai() {
+  try {
+    const r = await goiGet({ action: 'hientai', may: MAY });
+    const d = r.ok ? r.data : null;
+    lastRowKey = d ? d.rowKey : null;
+    lastCa = d ? d.maCa : null;
+    $('hientai').textContent = d
+      ? (TEN_TT[d.trangThai] || d.trangThai) + ' · ' + d.thoiGian + (d.maKhuon ? ' · ' + d.maKhuon : '')
+      : 'Chưa có trạng thái';
+    $('canh').style.display = (lastCa && lastCa !== $('ca').value) ? 'block' : 'none';
+  } catch (e) {
+    $('hientai').textContent = 'Không tải được (kiểm tra mạng)';
+  }
 }
 
 // ---------- Hàng chờ khi mất mạng ----------
 function layHangCho() { return JSON.parse(localStorage.getItem('hangcho') || '[]'); }
 function luuHangCho(q) { localStorage.setItem('hangcho', JSON.stringify(q)); }
 
-function xepHang(fn, p) {
-  const q = layHangCho(); q.push({ fn, p }); luuHangCho(q);
+function xepHang(action, p) {
+  const q = layHangCho(); q.push({ action, p }); luuHangCho(q);
   chayHangCho();
 }
 
-function chayHangCho() {
+async function chayHangCho() {
   const q = layHangCho();
   if (!q.length) return;
-  const item = q[0];
-  const ok = r => {
-    const cur = layHangCho(); cur.shift(); luuHangCho(cur);
-    if (r && r.ok === false) { thongBao('Không ghi được: ' + r.loi); }
-    else { thongBao('Đã ghi'); taiHienTai(); }
+  try {
+    const r = await goiPost(q[0].action, q[0].p);
+    const cur = layHangCho(); cur.shift(); luuHangCho(cur);   // đã gửi (thành công hoặc bị từ chối)
+    if (r.ok === false) thongBao('Không ghi được: ' + r.loi);
+    else thongBao('Đã ghi');
+    taiHienTai();
     chayHangCho();
-  };
-  const fail = () => {
+  } catch (e) {
+    // mất mạng: giữ nguyên hàng chờ, thử lại sau
     thongBao('Chưa gửi được, sẽ thử lại khi có mạng');
     setTimeout(chayHangCho, 15000);
-  };
-  const runner = google.script.run.withSuccessHandler(ok).withFailureHandler(fail);
-  if (item.fn === 'ghiTrangThai') runner.ghiTrangThai(item.p);
-  else runner.ghiPhePham(item.p);
+  }
 }
 
 // ---------- Thao tác ----------
@@ -161,7 +191,7 @@ function gui(tt) {
   if (tt !== 'DUNG' && !$('khuon').value) return thongBao('Chọn khuôn');
   if (!$('nv').value) return thongBao('Chọn nhân viên');
   xepHang('ghiTrangThai', {
-    k: K, rowKey: taoKey(), thoiGianQuet: new Date().toISOString(),
+    rowKey: taoKey(), thoiGianQuet: new Date().toISOString(),
     may: MAY, trangThai: tt, maCa: $('ca').value,
     maKhuon: tt === 'DUNG' ? '' : $('khuon').value,
     lyDo: tt === 'DUNG' ? $('lydo').value : '',
@@ -173,7 +203,7 @@ function huyCuoi() {
   if (!lastRowKey) return thongBao('Không có lần quét nào để hủy');
   if (!$('nv').value) return thongBao('Chọn nhân viên');
   xepHang('ghiTrangThai', {
-    k: K, rowKey: taoKey(), thoiGianQuet: new Date().toISOString(),
+    rowKey: taoKey(), thoiGianQuet: new Date().toISOString(),
     may: MAY, trangThai: 'HUY', maCa: $('ca').value,
     maKhuon: '', lyDo: '', maNV: $('nv').value, rowKeyHuy: lastRowKey
   });
@@ -185,7 +215,7 @@ function guiPhePham() {
   if (!$('khuon').value) return thongBao('Chọn khuôn');
   if (!$('nv').value) return thongBao('Chọn nhân viên');
   xepHang('ghiPhePham', {
-    k: K, rowKey: taoKey(), thoiGianQuet: new Date().toISOString(),
+    rowKey: taoKey(), thoiGianQuet: new Date().toISOString(),
     may: MAY, maCa: $('ca').value, maKhuon: $('khuon').value,
     soLuong: n, maNV: $('nv').value
   });
